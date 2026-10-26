@@ -20,6 +20,22 @@ variable "github_repository" {
   default     = "hasekazu/study-cicd"
 }
 
+# GitHub のユーザー（Organization）とリポジトリに割り当てられた数値 ID。
+# 名前は変更や削除・再作成ができるが、ID は変わらず使い回されることもない。
+# 次のコマンドで確認できる:
+#   gh api repos/hasekazu/study-cicd --jq '"repo id: \(.id)  owner id: \(.owner.id)"'
+variable "github_owner_id" {
+  description = "GitHub リポジトリのオーナー（ユーザー / Organization）の数値 ID"
+  type        = number
+  default     = 4082992
+}
+
+variable "github_repository_id" {
+  description = "GitHub リポジトリの数値 ID"
+  type        = number
+  default     = 1434301180
+}
+
 variable "github_branch" {
   description = "AWS へのアクセスを許可するブランチ。このブランチで動くワークフローだけがロールを引き受けられる"
   type        = string

@@ -176,8 +176,8 @@ OIDC(OpenID Connect)は、「ある発行者が署名したトークンを見せ
  GitHub Actions のジョブ               GitHub の OIDC 発行者                  AWS
  ─────────────────────               ────────────────────                 ───
  ① トークンを要求  ────────────────▶  ② 署名付きトークン(JWT)を発行
-    (id-token: write が必要)           「repo:hasekazu/study-cicd:
-                     ◀────────────────   ref:refs/heads/main のジョブです」
+    (id-token: write が必要)           「hasekazu/study-cicd の
+                     ◀────────────────   main ブランチのジョブです」
  ③ トークンを提示して
     ロール引き受けを要求  ──────────────────────────────────────────▶  ④ STS が検証
     (AssumeRoleWithWebIdentity)                                        ・署名は GitHub のものか
@@ -217,7 +217,7 @@ OIDC(OpenID Connect)は、「ある発行者が署名したトークンを見せ
   "Condition": {
     "StringEquals": {
       "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-      "token.actions.githubusercontent.com:sub": "repo:hasekazu/study-cicd:ref:refs/heads/main"
+      "token.actions.githubusercontent.com:sub": "repo:hasekazu@4082992/study-cicd@1434301180:ref:refs/heads/main"
     }
   }
 }
@@ -234,16 +234,38 @@ OIDC(OpenID Connect)は、「ある発行者が署名したトークンを見せ
 **`sub` 条件の重要性**: GitHub の OIDC プロバイダは、GitHub 上の**すべてのリポジトリ**のトークンを同じ鍵で署名しています。
 `sub` 条件が無いと、他人のリポジトリのワークフローからでもこのロールを引き受けられてしまいます。
 
+**`sub` の形式(immutable subject)**: このリポジトリの `sub` は、ユーザー名とリポジトリ名の後ろに `@数値ID` が付く形式です。
+
+```
+repo:hasekazu@4082992/study-cicd@1434301180:ref:refs/heads/main
+     ~~~~~~~~ ~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~~~~~~~~~~~
+     ユーザー名 ユーザーID リポジトリ名 リポジトリID  ブランチ
+```
+
+名前は変更や削除ができるため、名前だけで判定していると、削除されたリポジトリと同じ名前で第三者がリポジトリを作り直したときに、そのリポジトリのワークフローがロールを引き受けられてしまう危険があります。
+数値 ID は使い回されないので、ID まで一致を求めればこれを防げます。
+
+リポジトリの設定によっては、ID が付かない従来の形式(`repo:hasekazu/study-cicd:ref:refs/heads/main`)になる場合があります。
+形式と ID は次のコマンドで確認できます。信頼ポリシーの `sub` がトークンと 1 文字でも違うと、`Not authorized to perform sts:AssumeRoleWithWebIdentity` エラーになります。
+
+```bash
+# use_immutable_subject が true なら ID 付きの形式。sub_claim_prefix が sub の先頭部分
+gh api repos/hasekazu/study-cicd/actions/oidc/customization/sub
+# ユーザー ID とリポジトリ ID(terraform/variables.tf の github_owner_id, github_repository_id)
+gh api repos/hasekazu/study-cicd --jq '"repo id: \(.id)  owner id: \(.owner.id)"'
+```
+
 `sub` の値はジョブのきっかけによって変わります。
 
 | きっかけ | `sub` の例 | このロールを引き受けられるか |
 |---|---|---|
-| main への push(とその後の workflow_run) | `repo:hasekazu/study-cicd:ref:refs/heads/main` | できる |
-| 別ブランチへの push | `repo:hasekazu/study-cicd:ref:refs/heads/feature-x` | できない |
-| プルリクエスト | `repo:hasekazu/study-cicd:pull_request` | できない |
-| 他のリポジトリ | `repo:someone/other-repo:...` | できない |
+| main への push(とその後の workflow_run) | `repo:hasekazu@4082992/study-cicd@1434301180:ref:refs/heads/main` | できる |
+| 別ブランチへの push | `repo:hasekazu@4082992/study-cicd@1434301180:ref:refs/heads/feature-x` | できない |
+| プルリクエスト | `repo:hasekazu@4082992/study-cicd@1434301180:pull_request` | できない |
+| 他のリポジトリ | `repo:someone@111/other-repo@222:...` | できない |
+| 同じ名前で作り直された別のリポジトリ | `repo:hasekazu@4082992/study-cicd@<別のID>:...` | できない |
 
-条件の演算子には `StringEquals`(完全一致)を使っています。`StringLike` を使うと、`repo:hasekazu/study-cicd:*` のようにワイルドカードで指定できます(全ブランチを許可する場合など)。範囲が広がるので、必要なときだけ使います。
+条件の演算子には `StringEquals`(完全一致)を使っています。`StringLike` を使うと、`repo:hasekazu@4082992/study-cicd@1434301180:*` のようにワイルドカードで指定できます(全ブランチを許可する場合など)。範囲が広がるので、必要なときだけ使います。
 
 ### ECR ライフサイクルポリシー
 

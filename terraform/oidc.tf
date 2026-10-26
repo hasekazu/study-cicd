@@ -9,6 +9,10 @@
 
 locals {
   github_oidc_url = "https://token.actions.githubusercontent.com"
+
+  # "hasekazu/study-cicd" を "hasekazu" と "study-cicd" に分ける
+  github_owner     = split("/", var.github_repository)[0]
+  github_repo_name = split("/", var.github_repository)[1]
 }
 
 # ------------------------------------------------------------
@@ -69,11 +73,16 @@ data "aws_iam_policy_document" "github_actions_trust" {
 
     # トークンの主体（sub）が「指定リポジトリの指定ブランチ」であること。
     # これが無いと、GitHub 上の「どのリポジトリのワークフローでも」このロールを引き受けられてしまう。
-    # 例: repo:hasekazu/study-cicd:ref:refs/heads/main
+    #
+    # sub は immutable subject 形式（名前の後ろに @数値ID が付く）:
+    #   repo:hasekazu@4082992/study-cicd@1434301180:ref:refs/heads/main
+    # ID まで一致を求めるので、同じ名前のリポジトリを第三者が作り直しても引き受けられない。
+    # （リポジトリの設定によっては ID が付かない従来形式 repo:hasekazu/study-cicd:ref:refs/heads/main になる。
+    #   形式は `gh api repos/<owner>/<repo>/actions/oidc/customization/sub` で確認できる）
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:ref:refs/heads/${var.github_branch}"]
+      values   = ["repo:${local.github_owner}@${var.github_owner_id}/${local.github_repo_name}@${var.github_repository_id}:ref:refs/heads/${var.github_branch}"]
     }
   }
 }
