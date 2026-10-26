@@ -7,3 +7,4 @@ build/
 .github/
 *.md
 terraform/
+terraform-ecs/

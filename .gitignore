@@ -17,8 +17,12 @@ build/
 
 # Terraform
 # .terraform/ はプロバイダのダウンロード先、tfstate は AWS 上のリソースの記録（ID などを含むので公開しない）
-terraform/.terraform/
-terraform/*.tfstate
-terraform/*.tfstate.*
-terraform/*.tfvars
+# （terraform/ と terraform-ecs/ の両方に当てはまるように、フォルダ名を指定しない書き方にしている）
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
 # .terraform.lock.hcl（プロバイダのバージョン固定）はコミットする
+
+# 学習のまとめメモ（ローカル用、リポジトリには含めない）
+wrapup-*.md

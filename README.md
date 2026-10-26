@@ -74,6 +74,14 @@ docker run --rm -p 8080:8080 study-cicd
 │   ├── ecr.tf                 #   ECR リポジトリとライフサイクルポリシー
 │   ├── outputs.tf             #   apply 後に表示する値（ロール ARN、ECR の URL）
 │   └── .terraform.lock.hcl    #   プロバイダのバージョン固定（コミットする）
+├── terraform-ecs/             # ECS Fargate で動かす構成（terraform/ とは別プロジェクト）
+│   ├── versions.tf            #   Terraform・AWS プロバイダのバージョンとリージョン
+│   ├── variables.tf           #   入力変数（CPU/メモリ、Fargate Spot、ログ保存日数など）
+│   ├── network.tf             #   VPC、パブリックサブネット、インターネットゲートウェイ、セキュリティグループ
+│   ├── alb.tf                 #   ALB、リスナー、ターゲットグループ（ヘルスチェック）
+│   ├── ecs.tf                 #   クラスター、タスク定義、サービス、CloudWatch Logs、タスク実行ロール
+│   ├── outputs.tf             #   apply 後に表示する値（アプリの URL など）
+│   └── .terraform.lock.hcl    #   プロバイダのバージョン固定（コミットする）
 ├── gradle/wrapper/            # Gradle Wrapper の本体と設定（使う Gradle のバージョンを固定）
 ├── gradlew, gradlew.bat       # Gradle Wrapper の起動スクリプト（mac/Linux 用, Windows 用）
 ├── settings.gradle            # プロジェクト名の設定
@@ -295,3 +303,127 @@ gh variable delete AWS_ROLE_ARN
 - `create_oidc_provider=false` で既存のプロバイダを使った場合、そのプロバイダは Terraform の管理外なので削除されません。
 - 削除後に main へ push すると、`Push to ECR` ワークフローはロールが無いため失敗します。不要になったら、Actions タブでワークフローを無効化する(「…」→「Disable workflow」)か、`ecr-push.yml` を削除してください。
 - `terraform.tfstate`(作ったリソースの記録)を消してしまうと、Terraform から削除できなくなります。destroy が終わるまでは消さないでください。
+
+## ECS Fargate で動かす(`terraform-ecs/`)
+
+ECR のイメージを ECS Fargate で動かし、ALB 経由でインターネットに公開します。
+学習用として、**コストを最小にする**ことを優先した構成です。
+
+```
+インターネット
+   │ HTTP :80
+ [ALB]                  パブリックサブネット × 2(AZ-a, AZ-c)
+   │ :8080(ALB からのみ許可)
+ [Fargate タスク × 1]   パブリックサブネット(パブリック IP あり、NAT Gateway なし)
+   │ HTTPS :443
+ ECR(イメージ取得) / CloudWatch Logs(ログ送信)
+```
+
+`terraform/`(OIDC・ECR)とは別の Terraform プロジェクトです。state も別々なので、**費用のかかる ECS 側だけを削除・再作成でき、ECR とイメージは残せます。**
+
+### コストを抑えるための工夫
+
+| 工夫 | 内容 |
+|---|---|
+| NAT Gateway を使わない | 通常はタスクをプライベートサブネットに置き、NAT Gateway(約 $45/月 + 通信料)経由で ECR にアクセスする。ここではタスクをパブリックサブネットに置き、パブリック IP で直接アクセスする |
+| VPC エンドポイントも使わない | NAT の代わりに VPC エンドポイントを使う方法もあるが、1 つ約 $10/月で 3〜4 個必要になる。パブリック IP(約 $3.6/月)の方が安い |
+| Fargate Spot | AWS の空き容量を使う、約 70% 安い Fargate。AWS の都合で中断されることがあるが、ECS が自動で起動し直す(`use_fargate_spot=false` で通常の Fargate に切り替え可能) |
+| 最小のタスクサイズ | 0.25 vCPU / 512 MB(Fargate の最小構成) |
+| ログの保存期間 1 日 | CloudWatch Logs の保存料金を抑える |
+| Container Insights 無効 | 詳細なメトリクスの収集は追加料金がかかるため無効にする |
+
+**パブリックサブネットでも安全にするために**: タスクにはパブリック IP がありますが、セキュリティグループで **ALB からの 8080 番ポートへの通信だけ** を許可しています。インターネットからタスクに直接アクセスすることはできません。
+
+### 費用の目安(東京リージョン)
+
+動かしている間、時間単位で料金がかかります。以下は概算です。正確な金額は AWS の料金ページで確認してください。
+
+| 項目 | 1 時間あたり |
+|---|---|
+| ALB(固定料金 + 最小限の利用量) | 約 $0.025 |
+| パブリック IPv4 × 3(ALB × 2、タスク × 1) | 約 $0.015 |
+| Fargate Spot(0.25 vCPU / 512 MB) | 約 $0.005(通常の Fargate なら約 $0.015) |
+| **合計** | **約 $0.045(1 日で約 $1.1、1 か月で約 $33)** |
+
+ALB は、リクエストが無くても時間単位で料金がかかります。**使い終わったら `terraform destroy` で削除し、使うときにまた `terraform apply` で作る** のが一番の節約です(作成は 5 分前後でできます)。
+
+### 起動手順
+
+前提: `terraform/` を apply 済みで、ECR に `latest` タグのイメージがあること。
+
+```bash
+cd terraform-ecs
+terraform init
+terraform plan     # 23 個のリソースが作成されることを確認
+terraform apply    # yes を入力
+```
+
+apply が終わると、アプリの URL が表示されます。
+
+```
+app_url = "http://study-cicd-alb-xxxxxxxx.ap-northeast-1.elb.amazonaws.com"
+```
+
+`terraform apply` が完了した時点では、タスクはまだ起動中のことがあります。タスクが起動して ALB のヘルスチェックに合格するまで、**apply 完了からさらに数分かかります**(その間は 503 エラーが返ります)。
+
+apply が終わったら、次のコマンドで起動を待ってから動作確認します。
+
+```bash
+URL=$(terraform output -raw app_url)
+
+# 200 が返るまで 10 秒ごとに確認する(Ctrl + C で中断)
+until curl -sf "$URL/actuator/health"; do echo "起動待ち..."; sleep 10; done
+
+curl -X POST "$URL/items" -H 'Content-Type: application/json' -d '{"name": "りんご", "price": 120}'
+curl "$URL/items"
+```
+
+### ログを見る
+
+```bash
+# 直近のログを表示し、新しいログを待ち続ける(Ctrl + C で終了)
+aws logs tail /ecs/study-cicd --follow --region ap-northeast-1
+```
+
+AWS コンソールでは、CloudWatch → ロググループ → `/ecs/study-cicd` で見られます。
+
+### 新しいイメージに更新する
+
+ECR に新しい `latest` イメージを push しても、動いているタスクは自動では入れ替わりません。次のコマンドで、タスクを新しいイメージで起動し直します。
+
+```bash
+aws ecs update-service --cluster study-cicd --service study-cicd \
+  --force-new-deployment --region ap-northeast-1
+```
+
+### うまく動かないとき
+
+```bash
+# サービスのイベント(タスクの起動・停止・ヘルスチェックの結果)を確認する
+aws ecs describe-services --cluster study-cicd --services study-cicd --region ap-northeast-1 \
+  --query 'services[0].events[:5].[createdAt,message]' --output table
+
+# 停止したタスクの停止理由を確認する
+aws ecs list-tasks --cluster study-cicd --desired-status STOPPED --region ap-northeast-1
+aws ecs describe-tasks --cluster study-cicd --tasks <タスクARN> --region ap-northeast-1 \
+  --query 'tasks[0].[stoppedReason,containers[0].reason]'
+```
+
+| 症状 | 主な原因 |
+|---|---|
+| `CannotPullContainerError` | ECR に指定のタグのイメージが無い、またはタスクがインターネットに出られない(パブリック IP・ルートテーブル・セキュリティグループの送信ルール) |
+| ヘルスチェックに失敗してタスクが入れ替わり続ける | アプリが起動しきる前にヘルスチェックが始まっている。`health_check_grace_period_seconds` を延ばす |
+| `OutOfMemoryError` やタスクの停止理由が `OutOfMemory` | メモリ不足。`task_memory` を 1024 に増やす |
+
+### 削除手順(terraform destroy)
+
+```bash
+cd terraform-ecs
+terraform plan -destroy   # 23 個のリソースが削除されることを確認
+terraform destroy         # yes を入力
+```
+
+- ALB、ECS、VPC、CloudWatch Logs のロググループ(ログも含む)、IAM ロールの **すべてが削除されます**。
+- ECR リポジトリとイメージは `terraform/` 側で管理しているので、**削除されずに残ります**。ECR も含めてすべて片付ける場合は、続けて `terraform/` 側でも `terraform destroy` を実行してください(前の「削除手順」を参照)。
+- 削除の順番は、**`terraform-ecs/` → `terraform/` の順** にしてください。`terraform-ecs/` は ECR リポジトリを参照しているため、逆の順番だと `terraform-ecs/` の plan や destroy がエラーになります。
+- 削除が終わったら、AWS コンソールの「請求とコスト管理」で、翌日以降に料金が発生していないことを確認すると安心です。
