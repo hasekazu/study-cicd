@@ -14,3 +14,11 @@ build/
 
 # Claude Code のローカル設定
 .claude/
+
+# Terraform
+# .terraform/ はプロバイダのダウンロード先、tfstate は AWS 上のリソースの記録（ID などを含むので公開しない）
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+# .terraform.lock.hcl（プロバイダのバージョン固定）はコミットする

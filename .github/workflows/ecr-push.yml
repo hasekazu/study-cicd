@@ -1,0 +1,86 @@
+# Docker イメージをビルドして Amazon ECR に push するワークフロー。
+# AWS のアクセスキーは使わず、OIDC で IAM ロールを引き受けて一時的な認証情報を得る。
+
+name: Push to ECR
+
+on:
+  # CI ワークフロー（ci.yml の name: CI）が完了したときに実行する。
+  # テストが通ったコミットだけを push するため、CI の後に動くようにしている。
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # Actions タブから手動実行もできるようにする
+  # （main 以外のブランチで実行すると、IAM ロールの信頼ポリシーで拒否される）
+  workflow_dispatch:
+
+# ワークフロー全体のデフォルト権限（最小限）
+permissions:
+  contents: read
+
+# 同時に複数実行されると latest が古いイメージで上書きされる可能性があるため、1 つずつ順番に実行する
+concurrency:
+  group: ecr-push
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REPOSITORY: study-cicd
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+
+    # workflow_run で起動された場合は、次の条件をすべて満たすときだけ実行する
+    #   - CI が成功した
+    #   - CI のきっかけが push だった（PR では push しない）
+    #   - main ブランチだった
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+
+    permissions:
+      contents: read
+      # OIDC トークン（GitHub が署名した「このワークフローは誰か」を示す JWT）の発行を許可する。
+      # これが無いと AWS に提示するトークンを取得できない
+      id-token: write
+
+    env:
+      # イメージに付けるコミットハッシュ。
+      # workflow_run の場合は「CI がテストしたコミット」、手動実行の場合は実行したコミット
+      IMAGE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+    steps:
+      # CI がテストしたのと同じコミットを取得する
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.IMAGE_SHA }}
+
+      # OIDC トークンを AWS STS に渡して IAM ロールを引き受け、一時的な認証情報を環境変数に設定する
+      # （AssumeRoleWithWebIdentity。認証情報は 1 時間で失効する）
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          # IAM ロールの ARN。リポジトリ変数（Settings → Secrets and variables → Actions → Variables）に設定する。
+          # ARN は秘密情報ではないので Secrets ではなく Variables を使う
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 上の一時認証情報を使って docker login する（ecr:GetAuthorizationToken）
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # イメージをビルドし、コミットハッシュと latest の 2 つのタグを付けて push する
+      - name: Build and push image
+        env:
+          # 例: 740771095112.dkr.ecr.ap-northeast-1.amazonaws.com
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          IMAGE="$REGISTRY/$ECR_REPOSITORY"
+          docker build -t "$IMAGE:$IMAGE_SHA" -t "$IMAGE:latest" .
+          docker push --all-tags "$IMAGE"
+          echo "Pushed: $IMAGE:$IMAGE_SHA, $IMAGE:latest" >> "$GITHUB_STEP_SUMMARY"
