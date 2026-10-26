@@ -1,0 +1,26 @@
+# application.yml
+# Spring Boot の設定ファイル。起動時に自動で読み込まれる。
+
+server:
+  # アプリが待ち受けるポート番号（デフォルトも 8080 だが、明示しておく）
+  port: 8080
+
+spring:
+  application:
+    # アプリ名（ログなどに表示される）
+    name: study-cicd
+
+management:
+  # Actuator（運用向け機能）の設定
+  endpoints:
+    web:
+      exposure:
+        # HTTP で公開する Actuator エンドポイント。health だけを公開する
+        # （env や beans などは内部情報が見えてしまうので公開しない）
+        include: health
+  endpoint:
+    health:
+      # Docker やクラウドが「生きているか / リクエストを受けられるか」を確認するための
+      # /actuator/health/liveness と /actuator/health/readiness も有効にする
+      probes:
+        enabled: true

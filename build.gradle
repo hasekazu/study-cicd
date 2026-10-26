@@ -1,0 +1,52 @@
+// build.gradle
+// ビルドの設定ファイル。「どのプラグインを使うか」「どのライブラリに依存するか」を書く。
+
+plugins {
+    // Java のコンパイル・テスト・jar 作成などの基本タスクを追加する
+    id 'java'
+    // Spring Boot プラグイン: bootRun（起動）や bootJar（実行可能 jar 作成）タスクを追加する
+    id 'org.springframework.boot' version '3.5.14'
+    // 依存ライブラリのバージョンを Spring Boot 推奨の組み合わせに揃えてくれる
+    // （そのため下の dependencies ではバージョン番号を省略できる）
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.example'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    // Java 21 でコンパイルする（toolchain を使うと、実行中の JDK と別バージョンでも指定どおりにビルドできる）
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    // ライブラリのダウンロード元。Java の標準的な公開リポジトリ
+    mavenCentral()
+}
+
+dependencies {
+    // REST API を作るためのセット（Spring MVC + 組み込み Tomcat + JSON 変換の Jackson）
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    // 入力値チェック（@NotBlank など）を使うためのライブラリ
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    // /actuator/health などの運用向けエンドポイントを提供する
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    // テスト用のセット（JUnit 5, AssertJ, MockMvc など）。testImplementation はテスト時だけ使う依存
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // JUnit 5 をテスト実行時に起動するためのランチャー
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    // テストを JUnit 5（JUnit Platform）で実行する
+    useJUnitPlatform()
+}
+
+// 通常の jar（依存ライブラリを含まない「plain jar」）は不要なので作らない。
+// これで build/libs/ には実行可能な jar が 1 つだけになり、Dockerfile でのコピーが簡単になる。
+tasks.named('jar') {
+    enabled = false
+}

@@ -1,0 +1,8 @@
+# docker build 時にコンテナへ送らないファイル（ビルドを速く・イメージをきれいに保つ）
+build/
+.gradle/
+.idea/
+.vscode/
+.git/
+.github/
+*.md

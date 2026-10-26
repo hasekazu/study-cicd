@@ -1,0 +1,50 @@
+# GitHub Actions のワークフロー定義。
+# GitHub にこのファイルを push すると、下の条件で自動的にビルドとテストが実行される。
+
+name: CI
+
+# 実行のきっかけ（トリガー）
+on:
+  # どのブランチへの push でも実行する
+  push:
+  # プルリクエストの作成・更新時にも実行する
+  pull_request:
+
+# GITHUB_TOKEN の権限を読み取りだけに絞る（必要最小限の権限にするのが安全）
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # 実行環境（GitHub が用意する Ubuntu の仮想マシン）
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. リポジトリのコードを仮想マシンに取得する
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # 2. Java 21 をインストールする（Eclipse Temurin は無償で使える OpenJDK のディストリビューション）
+      #    cache: gradle を指定すると、~/.gradle/caches と ~/.gradle/wrapper
+      #    （ダウンロード済みの依存ライブラリと Gradle 本体）を GitHub のキャッシュに保存・復元する。
+      #    キャッシュのキーは build.gradle などのハッシュから作られるので、依存関係を変更すると自動で作り直される。
+      #    2 回目以降の実行ではダウンロードが省略され、ビルドが速くなる。
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      # 3. ビルドとテストを実行する（build タスクはコンパイル + テスト + jar 作成を含む）
+      - name: Build and test
+        run: ./gradlew build
+
+      # 4. テストが失敗したときに原因を調べられるよう、テストレポートを保存する
+      #    （Actions の実行結果画面からダウンロードできる）
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-report
+          path: build/reports/tests/test

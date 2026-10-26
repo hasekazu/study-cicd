@@ -1,0 +1,16 @@
+# Gradle のビルド成果物とキャッシュ
+build/
+.gradle/
+# gradle-wrapper.jar はコミットする必要があるので除外しない
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE の設定ファイル
+.idea/
+*.iml
+.vscode/
+
+# macOS
+.DS_Store
+
+# Claude Code のローカル設定
+.claude/

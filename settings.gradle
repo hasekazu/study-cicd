@@ -1,0 +1,3 @@
+// settings.gradle
+// Gradle が最初に読むファイル。プロジェクト名（= 生成される jar 名の元）を決める。
+rootProject.name = 'study-cicd'
